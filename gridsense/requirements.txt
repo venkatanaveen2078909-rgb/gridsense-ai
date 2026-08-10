@@ -1,0 +1,32 @@
+# AI reasoning agent — Claude backend (original)
+anthropic>=0.40
+
+# AI reasoning agent — Groq backend (free alternative)
+groq>=0.9
+
+# Web dashboard
+flask>=3.0
+
+# Production WSGI server (replaces Flask dev server)
+gunicorn>=21.0
+
+# Production input validation
+pydantic>=2.0
+
+# Environment variable management (.env file support)
+python-dotenv>=1.0
+
+# Message Broker and Database (Phase 2)
+redis>=5.0
+psycopg2-binary>=2.9
+requests>=2.31
+
+# Enterprise SaaS (Phase 3)
+PyJWT>=2.8.0
+bcrypt>=4.1.2
+
+# MQTT Protocol Adapter (Phase 2 - Option E)
+paho-mqtt>=2.0
+
+# OpenRouter / OpenAI-compatible backend
+openai>=1.0

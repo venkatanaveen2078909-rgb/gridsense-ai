@@ -1,0 +1,32 @@
+# GRIDSENSE
+gridsense_live.db
+gridsense_live.db-wal
+gridsense_live.db-shm
+gridsense_workorders.jsonl
+
+# Environment secrets — NEVER commit this
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Docker Services & DB
+mosquitto/data/
+mosquitto/log/
+pgdata/
+gridsense.db
+gridsense.db-wal
+gridsense.db-shm

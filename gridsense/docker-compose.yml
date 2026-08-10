@@ -1,0 +1,99 @@
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: gridsense-db
+    restart: always
+    environment:
+      POSTGRES_USER: gridsense
+      POSTGRES_PASSWORD: gridsense_password
+      POSTGRES_DB: gridsense_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gridsense -d gridsense_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build: .
+    container_name: gridsense-web
+    restart: always
+    ports:
+      - "5000:5000"
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - .:/app
+
+  simulator:
+    build: .
+    container_name: gridsense-simulator
+    restart: always
+    command: python scada_simulator.py
+    environment:
+      GRIDSENSE_INGEST_URL: "http://web:5000/api/v2/ingest"
+      GRIDSENSE_API_KEY: "key-aerowind"
+    env_file:
+      - .env
+    depends_on:
+      db:
+        condition: service_healthy
+      web:
+        condition: service_started
+    volumes:
+      - .:/app
+
+  # ── MQTT Broker (Eclipse Mosquitto) ─────────────────────────────────────────
+  mosquitto:
+    image: eclipse-mosquitto:2.0
+    container_name: gridsense-mosquitto
+    restart: always
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - ./mosquitto/data:/mosquitto/data
+      - ./mosquitto/log:/mosquitto/log
+
+  # ── MQTT → REST Adapter ──────────────────────────────────────────────────────
+  mqtt-adapter:
+    build: .
+    container_name: gridsense-mqtt-adapter
+    restart: always
+    command: python app/mqtt_adapter.py
+    environment:
+      MQTT_BROKER: "mosquitto"
+      MQTT_PORT: "1883"
+      MQTT_TOPIC: "gridsense/#"
+      GRIDSENSE_INGEST_URL: "http://web:5000/api/v2/ingest"
+      GRIDSENSE_API_KEY: "key-aerowind"
+    depends_on:
+      - mosquitto
+      - web
+    volumes:
+      - .:/app
+
+  # ── MQTT Simulator (publishes synthetic data to broker) ─────────────────────
+  mqtt-simulator:
+    build: .
+    container_name: gridsense-mqtt-simulator
+    restart: always
+    command: python mqtt_simulator.py
+    environment:
+      MQTT_BROKER: "mosquitto"
+      MQTT_PORT: "1883"
+      MQTT_TENANT_ID: "aerowind"
+      MQTT_INTERVAL_S: "3"
+    depends_on:
+      - mosquitto
+    volumes:
+      - .:/app
+
+volumes:
+  pgdata:

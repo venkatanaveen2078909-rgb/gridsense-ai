@@ -1,0 +1,15 @@
+asset_id,asset_type,timestamp,power_kw,irradiance_wm2,temp_c,dc_voltage,expected_dc_voltage,wind_ms,rated_kw,gearbox_temp_c,vibration_mm_s,oil_temp_c,load_pct,angle_deg,target_deg,comm_ok
+INV-01,SolarInverter,2026-07-13T11:00:00,540,820,58,,,,660,,,,,,,
+INV-02,SolarInverter,2026-07-13T11:00:00,0,790,62,,,,660,,,,,,,
+INV-03,SolarInverter,2026-07-13T11:00:00,505,810,78,,,,660,,,,,,,
+INV-04,SolarInverter,2026-07-13T11:00:00,390,815,60,,,,660,,,,,,,
+INV-05,SolarInverter,2026-07-13T11:00:00,548,825,59,,,,660,,,,,,,
+STR-14,SolarString,2026-07-13T11:00:00,,,,540,820,,,,,,,,,
+STR-22,SolarString,2026-07-13T11:00:00,,,,815,820,,,,,,,,,
+WTG-07,WindTurbine,2026-07-13T11:00:00,180,,,,,11.5,2500,64,3.1,,,,,
+WTG-09,WindTurbine,2026-07-13T11:00:00,2200,,,,,12.0,2500,83,3.4,,,,,
+WTG-11,WindTurbine,2026-07-13T11:00:00,2100,,,,,11.8,2500,66,8.2,,,,,
+TRF-01,Transformer,2026-07-13T11:00:00,,,,,,,,,,72,86,,,
+TRF-02,Transformer,2026-07-13T11:00:00,,,,,,,,,,94,112,,,
+TRK-05,Tracker,2026-07-13T11:00:00,,,,,,,,,,,,42,20,
+MTR-03,Meter,2026-07-13T11:00:00,,,,,,,,,,,,,,0

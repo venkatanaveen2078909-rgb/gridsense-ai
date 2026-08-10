@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>GRIDSENSE — Sign In</title>
+  <meta name="description" content="Sign in to GRIDSENSE — AI-powered renewable energy operations platform"/>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet"/>
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet"/>
+  <style>
+    :root {
+      --bg:      #060c1a;
+      --card:    rgba(255,255,255,.04);
+      --border:  rgba(255,255,255,.08);
+      --accent:  #3b6ff5;
+      --accent2: #6c47f5;
+      --glow:    rgba(59,111,245,.35);
+      --text:    #f0f4ff;
+      --muted:   rgba(240,244,255,.5);
+      --error:   #ff4d6d;
+      --success: #40c887;
+      --r:       16px;
+    }
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    html,body{height:100%;font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);overflow:hidden}
+
+    /* animated orb background */
+    .bg-orbs{position:fixed;inset:0;pointer-events:none;overflow:hidden;z-index:0}
+    .orb{position:absolute;border-radius:50%;filter:blur(120px);opacity:.45;animation:float 10s ease-in-out infinite alternate}
+    .orb1{width:600px;height:600px;background:radial-gradient(circle,#3b6ff5,transparent 70%);top:-150px;left:-100px;animation-delay:0s}
+    .orb2{width:500px;height:500px;background:radial-gradient(circle,#6c47f5,transparent 70%);bottom:-100px;right:-80px;animation-delay:-5s}
+    .orb3{width:300px;height:300px;background:radial-gradient(circle,#0ea5e9,transparent 70%);top:40%;left:50%;animation-delay:-3s}
+    @keyframes float{from{transform:translateY(0) scale(1)}to{transform:translateY(-30px) scale(1.05)}}
+
+    /* grid lines */
+    body::before{
+      content:'';position:fixed;inset:0;z-index:0;
+      background-image:
+        linear-gradient(rgba(59,111,245,.05) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(59,111,245,.05) 1px, transparent 1px);
+      background-size:60px 60px;
+    }
+
+    .wrap{position:relative;z-index:1;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px}
+
+    .brand{display:flex;align-items:center;gap:14px;margin-bottom:40px}
+    .brand-icon{width:52px;height:52px;border-radius:14px;
+      background:linear-gradient(135deg,var(--accent),var(--accent2));
+      display:flex;align-items:center;justify-content:center;
+      box-shadow:0 0 40px var(--glow)}
+    .brand-icon .mi{font-size:28px;color:#fff}
+    .brand-name{font-size:1.7rem;font-weight:800;letter-spacing:-.5px}
+    .brand-name span{color:var(--accent)}
+    .brand-tag{font-size:.72rem;color:var(--muted);font-weight:500;letter-spacing:.12em;text-transform:uppercase;margin-top:2px}
+
+    .card{
+      width:100%;max-width:420px;
+      background:var(--card);
+      border:1px solid var(--border);
+      border-radius:24px;
+      padding:40px 36px;
+      backdrop-filter:blur(24px);
+      box-shadow:0 30px 80px rgba(0,0,0,.5),0 0 0 1px rgba(255,255,255,.04),inset 0 1px 0 rgba(255,255,255,.08);
+    }
+
+    .card-title{font-size:1.35rem;font-weight:700;margin-bottom:6px}
+    .card-sub{font-size:.82rem;color:var(--muted);margin-bottom:32px}
+
+    .field{display:flex;flex-direction:column;gap:7px;margin-bottom:20px}
+    .field label{font-size:.75rem;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.07em}
+    .field-wrap{position:relative;display:flex;align-items:center}
+    .field-wrap .fi{position:absolute;left:14px;font-size:18px;color:var(--muted);pointer-events:none}
+    .field input{
+      width:100%;background:rgba(255,255,255,.05);
+      border:1.5px solid var(--border);border-radius:12px;
+      padding:13px 14px 13px 44px;
+      color:var(--text);font-size:.9rem;font-family:inherit;
+      transition:border-color .2s,box-shadow .2s;outline:none;
+    }
+    .field input::placeholder{color:rgba(240,244,255,.25)}
+    .field input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(59,111,245,.2)}
+
+    /* demo hint chips */
+    .demo-hints{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:28px}
+    .hint-chip{
+      font-size:.7rem;font-weight:500;padding:5px 11px;border-radius:20px;
+      border:1px solid var(--border);color:var(--muted);
+      background:rgba(255,255,255,.03);cursor:pointer;transition:all .2s;
+    }
+    .hint-chip:hover{border-color:rgba(59,111,245,.4);color:var(--accent);background:rgba(59,111,245,.08)}
+    .hint-chip strong{color:var(--text)}
+
+    .btn-login{
+      width:100%;padding:15px;border:none;border-radius:12px;
+      background:linear-gradient(135deg,var(--accent2),var(--accent));
+      color:#fff;font-size:.95rem;font-weight:700;font-family:inherit;
+      cursor:pointer;transition:all .25s;letter-spacing:.02em;
+      box-shadow:0 6px 28px var(--glow);
+    }
+    .btn-login:hover{transform:translateY(-2px);box-shadow:0 12px 40px var(--glow)}
+    .btn-login:active{transform:none}
+    .btn-login:disabled{opacity:.5;cursor:not-allowed;transform:none;box-shadow:none}
+    .spin{display:inline-block;animation:spin .6s linear infinite}
+    @keyframes spin{to{transform:rotate(360deg)}}
+
+    .alert{display:none;margin-top:16px;padding:12px 16px;border-radius:10px;font-size:.82rem;font-weight:500;align-items:center;gap:10px}
+    .alert.show{display:flex}
+    .alert.error{background:rgba(255,77,109,.1);border:1px solid rgba(255,77,109,.3);color:var(--error)}
+    .alert.success{background:rgba(64,200,135,.1);border:1px solid rgba(64,200,135,.3);color:var(--success)}
+
+    footer{position:fixed;bottom:16px;font-size:.68rem;color:rgba(240,244,255,.2);text-align:center;letter-spacing:.04em}
+  </style>
+</head>
+<body>
+
+<div class="bg-orbs">
+  <div class="orb orb1"></div>
+  <div class="orb orb2"></div>
+  <div class="orb orb3"></div>
+</div>
+
+<div class="wrap">
+  <div class="brand">
+    <div class="brand-icon"><span class="mi material-icons-round">bolt</span></div>
+    <div>
+      <div class="brand-name">GRID<span>SENSE</span></div>
+      <div class="brand-tag">Renewable Energy O&amp;M Platform</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Welcome back</div>
+    <div class="card-sub">Sign in to your operations dashboard</div>
+
+    <div class="field">
+      <label>Email</label>
+      <div class="field-wrap">
+        <span class="mi material-icons-round fi">alternate_email</span>
+        <input type="email" id="email" placeholder="admin@aerowind.com" autocomplete="email"/>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>Password</label>
+      <div class="field-wrap">
+        <span class="mi material-icons-round fi">lock</span>
+        <input type="password" id="password" placeholder="••••••••••" autocomplete="current-password"/>
+      </div>
+    </div>
+
+    <!-- Demo quick-fill chips -->
+    <div style="font-size:.7rem;color:var(--muted);margin-bottom:8px;font-weight:600;text-transform:uppercase;letter-spacing:.07em">Quick fill — Demo Tenants</div>
+    <div class="demo-hints">
+      <div class="hint-chip" onclick="fillDemo('admin@aerowind.com')">
+        <strong>AeroWind Corp</strong> · admin@aerowind.com
+      </div>
+      <div class="hint-chip" onclick="fillDemo('admin@solaris.com')">
+        <strong>Solaris Energy</strong> · admin@solaris.com
+      </div>
+    </div>
+
+    <button class="btn-login" id="btn-login" onclick="doLogin()">
+      Sign In
+    </button>
+
+    <div class="alert error" id="alert-error">
+      <span class="mi material-icons-round" style="font-size:18px">error_outline</span>
+      <span id="error-msg">Invalid credentials</span>
+    </div>
+    <div class="alert success" id="alert-ok">
+      <span class="mi material-icons-round" style="font-size:18px">check_circle</span>
+      <span>Login successful! Redirecting…</span>
+    </div>
+  </div>
+</div>
+
+<footer>GRIDSENSE &mdash; AYU Systems &nbsp;&middot;&nbsp; Enterprise O&amp;M AI Platform</footer>
+
+<script>
+  function fillDemo(email) {
+    document.getElementById('email').value = email;
+    document.getElementById('password').value = 'password123';
+    document.getElementById('alert-error').classList.remove('show');
+  }
+
+  async function doLogin() {
+    const email    = document.getElementById('email').value.trim();
+    const password = document.getElementById('password').value;
+    const btn      = document.getElementById('btn-login');
+    const errDiv   = document.getElementById('alert-error');
+    const okDiv    = document.getElementById('alert-ok');
+
+    errDiv.classList.remove('show');
+    okDiv.classList.remove('show');
+
+    if (!email || !password) {
+      document.getElementById('error-msg').textContent = 'Please enter email and password.';
+      errDiv.classList.add('show');
+      return;
+    }
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="mi material-icons-round spin" style="font-size:18px">sync</span> Authenticating…';
+
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password })
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        document.getElementById('error-msg').textContent = data.error || 'Login failed.';
+        errDiv.classList.add('show');
+        btn.disabled = false;
+        btn.innerHTML = 'Sign In';
+        return;
+      }
+
+      // Store JWT in BOTH storages so dashboard can always find it
+      sessionStorage.setItem('gs_token', data.token);
+      sessionStorage.setItem('gs_email', data.email);
+      sessionStorage.setItem('gs_role', data.role);
+      sessionStorage.setItem('gs_tenant_id', data.tenant_id);
+      sessionStorage.setItem('gs_tenant_name', data.tenant_name);
+      localStorage.setItem('gs_token', data.token);
+      localStorage.setItem('gs_email', data.email);
+      localStorage.setItem('gs_role', data.role);
+      localStorage.setItem('gs_tenant_id', data.tenant_id);
+      localStorage.setItem('gs_tenant_name', data.tenant_name);
+
+      okDiv.classList.add('show');
+      setTimeout(() => { window.location.href = '/dashboard'; }, 800);
+    } catch (e) {
+      document.getElementById('error-msg').textContent = 'Network error. Is the server running?';
+      errDiv.classList.add('show');
+      btn.disabled = false;
+      btn.innerHTML = 'Sign In';
+    }
+  }
+
+  // Allow Enter key
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Enter') doLogin();
+  });
+</script>
+</body>
+</html>
