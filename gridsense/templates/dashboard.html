@@ -87,7 +87,7 @@
       border-radius:20px;border:1px solid var(--border2);background:var(--card2);
       cursor:pointer;transition:all .2s;color:var(--muted);user-select:none;box-shadow:var(--shadow-sm)}
     .chip:hover{border-color:rgba(59,111,245,.3);color:var(--accent);background:#eef2ff}
-    .chip.on{border-color:rgba(225,29,72,.3);color:var(--critical);background:rgba(225,29,72,.06)}
+    .chip.on{border-color:#e11d48;color:#fff;background:#e11d48;font-weight:700;box-shadow:0 0 0 2px rgba(225,29,72,.25)}
     .chip .mi{font-size:14px}
     .btn-group{display:flex;gap:8px}
     .btn{display:flex;align-items:center;gap:6px;border:none;border-radius:var(--rs);
@@ -138,11 +138,13 @@
     .asset-row:hover{box-shadow:var(--shadow);transform:translateX(2px)}
     .asset-row.fault{border-color:rgba(234,88,12,.25);background:rgba(234,88,12,.04)}
     .asset-row.critical{border-color:rgba(225,29,72,.3);background:rgba(225,29,72,.04)}
+    .asset-row.shutdown{border-color:rgba(100,116,139,.3);background:rgba(100,116,139,.04)}
     .asset-ico{width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
     .asset-ico .mi{font-size:16px}
     .nominal .asset-ico{background:rgba(22,163,74,.1);color:var(--nominal)}
     .fault .asset-ico{background:rgba(234,88,12,.1);color:var(--high)}
     .critical .asset-ico{background:rgba(225,29,72,.1);color:var(--critical)}
+    .shutdown .asset-ico{background:rgba(100,116,139,.1);color:var(--muted)}
     .asset-info{flex:1;min-width:0}
     .asset-id{font-size:.83rem;font-weight:600;color:var(--text)}
     .asset-type{font-size:.67rem;color:var(--muted)}
@@ -150,6 +152,10 @@
     .sdot.nominal{background:var(--nominal);box-shadow:0 0 6px rgba(22,163,74,.4)}
     .sdot.fault{background:var(--high);box-shadow:0 0 6px rgba(234,88,12,.4);animation:pulse 1.4s infinite}
     .sdot.critical{background:var(--critical);box-shadow:0 0 7px rgba(225,29,72,.5);animation:pulse 1s infinite}
+    .sdot.shutdown{background:var(--muted);box-shadow:none;animation:none}
+    .btn-restart{background:rgba(22,163,74,.1);border:1px solid rgba(22,163,74,.3);color:var(--nominal);
+      border-radius:4px;cursor:pointer;padding:2px 6px;font-size:.65rem;font-weight:600;display:flex;align-items:center;gap:2px;outline:none;transition:all var(--trans)}
+    .btn-restart:hover{background:rgba(22,163,74,.2);transform:scale(1.02)}
 
     /* ── TABS ── */
     .tab-bar{display:flex;gap:4px;margin-bottom:16px;
@@ -319,7 +325,7 @@
     </div>
     <div class="pill pill-live" id="live-badge">
       <span class="dot-pulse"></span>
-      <span id="live-txt">Ready</span>
+      <span id="nav-live-txt">Ready</span>
     </div>
     <button onclick="doLogout()" title="Logout"
       style="border:1px solid #e2e8f0;border-radius:20px;padding:5px 13px;background:#f8fafc;cursor:pointer;font-size:.72rem;font-weight:600;color:#ef4444;display:flex;align-items:center;gap:5px">
@@ -333,9 +339,9 @@
 
   <!-- CONTROL BAR -->
   <div class="ctrl-bar">
-    <div class="upload-lbl">
+    <div class="upload-lbl" id="live-banner">
       <span class="mi material-icons-round">cell_tower</span>
-      <span style="margin-left:5px">Live SCADA Feed Active</span>
+      <span style="margin-left:5px" id="live-txt">Live SCADA Feed Active</span>
     </div>
 
     <div class="ctx-chips">
@@ -460,26 +466,94 @@
     window.location.replace('/');
   }
 
-  function syncContext(grid, status) {
-    const headers = authHeaders();
-    headers['Content-Type'] = 'application/json';
-    fetch('/api/context', {
-      method: 'POST',
-      headers: headers,
-      body: JSON.stringify({ grid_available: grid, plant_status: status })
-    }).catch(console.error);
+  // ── Grid/Curtail chip state ───────────────────────────────────────────
+  // Client-side source of truth. Synced from server on load only.
+  // Clicks update client state immediately and POST to server.
+  let chipGridOn  = false;  // true = Grid is DOWN
+  let chipCurtOn  = false;  // true = CURTAILED
+  let chipSaving  = false;  // true while POST in-flight
+
+  function _renderChips() {
+    document.getElementById('chip-grid').classList.toggle('on', chipGridOn);
+    document.getElementById('chip-curt').classList.toggle('on', chipCurtOn);
+    const liveTxt    = document.getElementById('live-txt');
+    const liveBanner = document.getElementById('live-banner');
+    const navTxt     = document.getElementById('nav-live-txt');
+    if (!chipGridOn && !chipCurtOn) {
+      if (liveTxt)    liveTxt.textContent    = 'Live SCADA Feed Active';
+      if (navTxt)     navTxt.textContent     = 'Monitoring Active';
+      if (liveBanner) { liveBanner.style.background='rgba(34,197,94,.08)'; liveBanner.style.borderColor='rgba(34,197,94,.2)'; liveBanner.style.color='var(--nominal)'; }
+    } else if (!chipGridOn && chipCurtOn) {
+      if (liveTxt)    liveTxt.textContent    = 'Plant Curtailed by Grid Operator';
+      if (navTxt)     navTxt.textContent     = 'Curtailed';
+      if (liveBanner) { liveBanner.style.background='rgba(245,158,11,.08)'; liveBanner.style.borderColor='rgba(245,158,11,.2)'; liveBanner.style.color='var(--high)'; }
+    } else {
+      if (liveTxt)    liveTxt.textContent    = 'Grid Offline — Plant Shutdown';
+      if (navTxt)     navTxt.textContent     = 'Grid Offline';
+      if (liveBanner) { liveBanner.style.background='rgba(225,29,72,.08)'; liveBanner.style.borderColor='rgba(225,29,72,.2)'; liveBanner.style.color='var(--critical)'; }
+    }
   }
 
-  function toggleCtx(w){
-    if(w==='grid') document.getElementById('chip-grid').classList.toggle('on');
-    else           document.getElementById('chip-curt').classList.toggle('on');
+  async function syncContext(grid, status) {
+    // Update client state and render immediately
+    chipGridOn = !grid;                       // grid=false means grid is DOWN
+    chipCurtOn = (status === 'CURTAILED');
+    _renderChips();
+    applySuppressionAndRender();
 
-    // Read BOTH chip states together so they never overwrite each other
-    const gridOn = document.getElementById('chip-grid').classList.contains('on');
-    const curtOn = document.getElementById('chip-curt').classList.contains('on');
-    const grid   = !gridOn;                              // chip ON  → grid unavailable
-    const status = curtOn ? 'CURTAILED' : 'RUNNING';    // curtailed chip overrides only when grid is OK
+    // POST to server
+    if (!token) { console.warn('No token, cannot save context'); return; }
+    chipSaving = true;
+    try {
+      const headers = { ...authHeaders(), 'Content-Type': 'application/json' };
+      const resp = await fetch('/api/context', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ grid_available: grid, plant_status: status })
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({}));
+        console.error('syncContext server error', resp.status, err);
+      }
+    } catch(e) {
+      console.error('syncContext fetch error', e);
+    }
+    chipSaving = false;
+  }
+
+  // Removed _applyChipState - replaced by _renderChips
+
+  function toggleCtx(w) {
+    if (chipSaving) return;   // ignore double-clicks during save
+    if (w === 'grid') chipGridOn = !chipGridOn;
+    else              chipCurtOn = !chipCurtOn;
+    const grid   = !chipGridOn;  // chipGridOn=true means grid is DOWN
+    const status = chipCurtOn ? 'CURTAILED' : 'RUNNING';
     syncContext(grid, status);
+  }
+
+  async function restartAsset(assetId) {
+    if (chipSaving) return;
+    try {
+      const res = await fetch('/api/context', { headers: authHeaders() });
+      if (!res.ok) return;
+      const ctxData = await res.json();
+      const newSD = (ctxData.shut_down_assets || []).filter(id => id !== assetId);
+      
+      chipSaving = true;
+      const saveRes = await fetch('/api/context', {
+        method: 'POST',
+        headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shut_down_assets: newSD })
+      });
+      if (saveRes.ok) {
+        await doPoll();
+      }
+    } catch(e) {
+      console.error('restartAsset error:', e);
+    } finally {
+      chipSaving = false;
+    }
   }
 
   function switchTab(t){
@@ -488,12 +562,11 @@
     document.getElementById('tab-wo').classList.toggle('active', t==='wo');
     document.getElementById('tab-analytics').classList.toggle('active', t==='analytics');
     document.getElementById('tab-chat').classList.toggle('active', t==='chat');
-    // Show the target pane FIRST, then fetch — so canvas has layout dimensions
     document.getElementById('tab-faults-content').style.display    = t==='faults'    ? '' : 'none';
     document.getElementById('tab-wo-content').style.display        = t==='wo'        ? '' : 'none';
     document.getElementById('tab-analytics-content').style.display = t==='analytics' ? '' : 'none';
     document.getElementById('tab-chat-content').style.display      = t==='chat'      ? 'flex' : 'none';
-    if(t === 'analytics') setTimeout(fetchLiveHistory, 50); // small delay so browser paints first
+    if(t === 'analytics') setTimeout(fetchLiveHistory, 50);
   }
 
   async function fetchLiveHistory() {
@@ -582,41 +655,43 @@
     });
   }
 
+  let latestFleetData = null;
+
+  function applySuppressionAndRender() {
+    if (!latestFleetData) return;
+    // Deep copy to prevent mutating raw history
+    const data = JSON.parse(JSON.stringify(latestFleetData));
+    if (chipGridOn || chipCurtOn) {
+      data.anomalies = [];
+      data.total_faults = 0;
+      data.by_severity = {};
+      data.nominal_count = data.total_assets;
+      if (data.assets) {
+        data.assets.forEach(a => {
+          if (data.shut_down_assets && data.shut_down_assets.includes(a.asset_id)) {
+            a.status = 'shutdown';
+          } else {
+            a.status = 'nominal';
+          }
+        });
+      }
+    }
+    renderKPI(data);
+    renderAssets(data.assets);
+    renderFaults(data.anomalies, data.shut_down_assets);
+    renderSevBars(data.by_severity, data.total_faults);
+  }
+
   /* ── Live Polling ── */
   async function fetchLiveFleet(){
     if (!token) return;
     try {
       const res = await fetch('/api/live/fleet', { headers: authHeaders() });
       if (!res.ok) { console.warn('Fleet API error', res.status); return; }
-      const data = await res.json();
-      renderKPI(data);
-      renderAssets(data.assets);
-      renderFaults(data.anomalies);
-      renderSevBars(data.by_severity, data.total_faults);
-      const liveTxt = document.getElementById('live-txt');
-      const liveBanner = document.getElementById('live-banner');
-      
-      // Update chip toggle states from server truth
-      document.getElementById('chip-grid').classList.toggle('on', !data.grid_available);
-      document.getElementById('chip-curt').classList.toggle('on', data.plant_status === 'CURTAILED');
-
-      if (!data.grid_available) {
-        liveTxt.textContent = 'Grid Offline — Plant Shutdown';
-        liveTxt.style.color = 'var(--critical)';
-        liveBanner.className = 'kpi c';
-      } else if (data.plant_status === 'CURTAILED') {
-        liveTxt.textContent = 'Plant Curtailed by Grid Operator';
-        liveTxt.style.color = 'var(--high)';
-        liveBanner.className = 'kpi h';
-      } else if (data.total_faults === 0) {
-        liveTxt.textContent = 'All Nominal (Live)';
-        liveTxt.style.color = 'var(--nominal)';
-        liveBanner.className = 'kpi g';
-      } else {
-        liveTxt.textContent = `${data.total_faults} Active Faults`;
-        liveTxt.style.color = 'var(--critical)';
-        liveBanner.className = 'kpi c';
-      }
+      latestFleetData = await res.json();
+      applySuppressionAndRender();
+      // NOTE: chip state and banner are managed exclusively by fetchContext()
+      // to avoid conflicts with the user toggle.
     } catch(e) {
       console.error('fetchLiveFleet error:', e);
     }
@@ -645,14 +720,18 @@
       const res = await fetch('/api/context', { headers: authHeaders() });
       if (!res.ok) return;
       const data = await res.json();
-      document.getElementById('chip-grid').classList.toggle('on', !data.grid_available);
-      document.getElementById('chip-curt').classList.toggle('on', data.plant_status === 'CURTAILED');
+      // Update client-side state from server (only called on page load)
+      chipGridOn = !data.grid_available;  // grid_available=false means grid is DOWN
+      chipCurtOn = (data.plant_status === 'CURTAILED');
+      _renderChips();
     } catch(e) { console.error('fetchContext error:', e); }
   }
 
   async function doPoll() {
     await fetchLiveFleet();
     await fetchLiveWorkOrders();
+    // NOTE: fetchContext is NOT called here to avoid race conditions with toggles.
+    // Chip state is owned by client after initial load.
   }
 
   /* ── Render KPI ── */
@@ -669,27 +748,57 @@
       document.getElementById('asset-container').innerHTML='<div class="empty"><span class="mi material-icons-round">sensors_off</span><p>No assets</p></div>';
       return;
     }
-    const order={critical:0,fault:1,nominal:2};
-    assets.sort((a,b)=>(order[a.status]||2)-(order[b.status]||2));
+    const order={critical:0,shutdown:1,fault:2,nominal:3};
+    assets.sort((a,b)=>(order[a.status]||3)-(order[b.status]||3));
     document.getElementById('asset-container').innerHTML = `
       <div class="asset-list">${assets.map(a=>`
         <div class="asset-row ${a.status}">
           <div class="asset-ico"><span class="mi material-icons-round">${a.icon}</span></div>
           <div class="asset-info"><div class="asset-id">${a.asset_id}</div><div class="asset-type">${a.asset_type}</div></div>
-          <div class="sdot ${a.status}"></div>
+          ${a.status === 'shutdown'
+            ? `<button onclick="restartAsset('${a.asset_id}')" class="btn-restart"><span class="mi material-icons-round" style="font-size:12px">play_arrow</span>Restart</button>`
+            : `<div class="sdot ${a.status}"></div>`
+          }
         </div>`).join('')}
       </div>`;
   }
 
   /* ── Render Faults ── */
-  function renderFaults(anomalies){
+  function renderFaults(anomalies, shutDownAssets){
+    let html = '';
+    
+    // AI safety shutdown warning cards
+    if (shutDownAssets && shutDownAssets.length > 0) {
+      html += `<div class="shutdown-warnings" style="margin-bottom:16px;display:flex;flex-direction:column;gap:8px">`;
+      shutDownAssets.forEach(aid => {
+        html += `
+          <div class="fault-card Low" style="border-color:rgba(100,116,139,.4);background:rgba(100,116,139,.03)">
+            <div class="fc-top">
+              <div class="fc-ico" style="background:rgba(100,116,139,.1);color:var(--muted)"><span class="mi material-icons-round">power_off</span></div>
+              <div style="flex:1;min-width:0">
+                <div class="fc-title" style="color:var(--text)">AI Safety Shutdown Active</div>
+                <div class="fc-asset">${aid} &middot; Automatic Isolation</div>
+              </div>
+              <button onclick="restartAsset('${aid}')" class="btn-restart" style="padding:4px 8px;font-size:.7rem"><span class="mi material-icons-round" style="font-size:14px">play_arrow</span>Restart Unit</button>
+            </div>
+            <div class="fc-detail">This unit was automatically shut down by the AI agent due to a critical anomaly to prevent thermal or equipment damage. Output is currently isolated (0.0 kW).</div>
+          </div>`;
+      });
+      html += `</div>`;
+    }
+
     if(!anomalies?.length){
-      document.getElementById('tab-faults-content').innerHTML =
-        `<div class="empty"><span class="mi material-icons-round" style="color:var(--nominal)">check_circle</span>
-         <p style="color:var(--nominal);font-weight:600">All assets nominal!</p></div>`;
+      if (html) {
+        document.getElementById('tab-faults-content').innerHTML = html;
+      } else {
+        document.getElementById('tab-faults-content').innerHTML =
+          `<div class="empty"><span class="mi material-icons-round" style="color:var(--nominal)">check_circle</span>
+           <p style="color:var(--nominal);font-weight:600">All assets nominal!</p></div>`;
+      }
       return;
     }
-    document.getElementById('tab-faults-content').innerHTML = `
+    
+    html += `
       <div class="fault-list">${anomalies.map((a,i)=>{
         const chips = Object.entries(a.metrics).slice(0,4)
           .map(([k,v])=>`<div class="mchip">${k}: <span>${v}</span></div>`).join('');
@@ -706,6 +815,8 @@
           ${chips?`<div class="metric-chips">${chips}</div>`:''}
         </div>`;}).join('')}
       </div>`;
+      
+    document.getElementById('tab-faults-content').innerHTML = html;
   }
 
   /* ── Render Work Orders ── */
@@ -832,7 +943,7 @@
     await doPoll();
 
     loadDiv.classList.remove('on');
-    document.getElementById('tab-faults-content').style.display = '';
+    switchTab('faults'); // Properly initialize tab visibility
 
     // ── Apply RBAC role badge + button locking ──
     const ROLE_STYLES = {

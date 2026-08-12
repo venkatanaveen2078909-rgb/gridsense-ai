@@ -183,6 +183,17 @@ class GroqAgent:
                 for tc in msg.tool_calls:
                     if tc.function.name == "record_workitem":
                         return json.loads(tc.function.arguments)
+        
+        # Fallback: Parse JSON directly from message content if tool call failed
+        if resp.choices and resp.choices[0].message.content:
+            content = resp.choices[0].message.content
+            import re
+            match = re.search(r'\{.*\}', content, re.DOTALL)
+            if match:
+                try:
+                    return json.loads(match.group(0))
+                except Exception as e:
+                    log.warning("Failed to parse JSON fallback from content", extra={"error": str(e)})
         raise RuntimeError("Groq agent did not return a work-item tool call.")
 
 
@@ -208,24 +219,34 @@ class OpenRouterAgent:
 
     @with_retry(max_attempts=3, base_delay=2.0)
     def triage(self, a: Anomaly) -> dict:
+        schema_json = json.dumps(TRIAGE_TOOL["input_schema"], indent=2)
+        sys_prompt = (
+            f"{SYSTEM_PROMPT}\n\n"
+            f"You MUST return a JSON object conforming exactly to this schema:\n{schema_json}\n\n"
+            f"Do not write any markdown blocks or code blocks. Just output raw, valid JSON."
+        )
         resp = self.client.chat.completions.create(
             model=self.model,
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": sys_prompt},
                 {"role": "user", "content": _build_user_prompt(a)},
             ],
-            tools=[GROQ_FUNCTION],
-            tool_choice={"type": "function", "function": {"name": "record_workitem"}},
-            max_tokens=MAX_TOKENS,
-            timeout=30.0,
+            response_format={"type": "json_object"},
+            max_tokens=4096,
+            timeout=45.0,
         )
-        for choice in resp.choices:
-            msg = choice.message
-            if msg.tool_calls:
-                for tc in msg.tool_calls:
-                    if tc.function.name == "record_workitem":
-                        return json.loads(tc.function.arguments)
-        raise RuntimeError("OpenRouter agent did not return a work-item tool call.")
+        content = resp.choices[0].message.content
+        log.info("OpenRouter JSON response received", extra={"content_len": len(content) if content else 0})
+        
+        if content:
+            import re
+            match = re.search(r'\{.*\}', content, re.DOTALL)
+            if match:
+                try:
+                    return json.loads(match.group(0))
+                except Exception as e:
+                    log.warning("Failed to parse JSON fallback from content", extra={"error": str(e)})
+        raise RuntimeError("OpenRouter agent did not return a valid JSON object matching the schema.")
 
 
 # ---------------------------------------------------------------------------

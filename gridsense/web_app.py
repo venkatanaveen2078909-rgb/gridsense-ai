@@ -132,16 +132,26 @@ def _run_monitor_for_tenant(tenant_id: str, agent):
         else:
             ctx = PlantContext(grid_available=True, plant_status="RUNNING", assets_in_maintenance=[])
 
-        rows = conn.execute(
-            "SELECT * FROM telemetry WHERE tenant_id=? AND processed=FALSE ORDER BY timestamp ASC",
+        # Always evaluate the latest telemetry snapshot for each asset.
+        # This is important because plant state may change after the row was
+        # ingested (for example grid-down was active when the reading arrived).
+        latest_rows = conn.execute(
+            """
+            SELECT * FROM (
+                SELECT *, ROW_NUMBER() OVER(PARTITION BY asset_id ORDER BY timestamp DESC) as rn
+                FROM telemetry WHERE tenant_id=?
+            ) t WHERE rn = 1
+            """,
             (tenant_id,)
         ).fetchall()
-        if not rows:
+        if not latest_rows:
             return 0
 
-        latest = {}
-        for r in rows:
-            latest[r["asset_id"]] = r
+        unprocessed = conn.execute(
+            "SELECT id FROM telemetry WHERE tenant_id=? AND processed=FALSE ORDER BY timestamp ASC",
+            (tenant_id,)
+        ).fetchall()
+        unprocessed_ids = [r["id"] for r in unprocessed]
 
         readings = [
             Reading(
@@ -149,7 +159,7 @@ def _run_monitor_for_tenant(tenant_id: str, agent):
                 timestamp=r["timestamp"],
                 metrics=json.loads(r["metrics_json"]) if isinstance(r["metrics_json"], str) else r["metrics_json"]
             )
-            for r in latest.values()
+            for r in latest_rows
         ]
 
         anomalies  = detect_all(readings, ctx)
@@ -166,6 +176,22 @@ def _run_monitor_for_tenant(tenant_id: str, agent):
                              (now_str, inc["id"]))
 
         pending_ai = []
+
+        # Bulk fetch latest work-order timestamp per (asset_id, rule) — avoids N+1 queries
+        if anomalies:
+            pairs = [(tenant_id, a.asset_id, a.rule) for a in anomalies]
+            placeholders = ",".join(["(?,?,?)"] * len(pairs))
+            flat_params = [v for triple in pairs for v in triple]
+            wo_rows = conn.execute(
+                f"SELECT asset_id, rule, MAX(created_at) as last_at "
+                f"FROM work_orders WHERE (tenant_id, asset_id, rule) IN ({placeholders}) "
+                f"GROUP BY asset_id, rule",
+                flat_params
+            ).fetchall()
+            last_wo_map = {(r["asset_id"], r["rule"]): r["last_at"] for r in wo_rows}
+        else:
+            last_wo_map = {}
+
         for a in anomalies:
             key = (a.asset_id, a.rule)
             inc = conn.execute(
@@ -178,27 +204,26 @@ def _run_monitor_for_tenant(tenant_id: str, agent):
             else:
                 conn.execute(
                     "INSERT INTO incidents (tenant_id, asset_id, asset_type, rule, status, first_seen, last_seen)"
-                    " VALUES (?,?,?,?,'Active',?,?)",
+                    " VALUES (?,?,?,?,'Active',?,?) RETURNING id",
                     (tenant_id, a.asset_id, a.asset_type, a.rule, now_str, now_str)
                 )
-                inc_id = conn.cu.lastrowid
+                res = conn.fetchone()
+                inc_id = res["id"] if res else conn.lastrowid
 
-            # AI cooldown check
-            last_wo = conn.execute(
-                "SELECT created_at FROM work_orders WHERE tenant_id=? AND asset_id=? AND rule=?"
-                " ORDER BY created_at DESC LIMIT 1", (tenant_id,) + key
-            ).fetchone()
-            run_ai = not last_wo
+            # AI cooldown check using pre-fetched map
+            last_at = last_wo_map.get(key)
+            run_ai = not last_at
             if not run_ai:
-                ts = last_wo["created_at"]
-                lw = datetime.fromisoformat(ts) if isinstance(ts, str) else ts
+                lw = datetime.fromisoformat(last_at) if isinstance(last_at, str) else last_at
+                if lw.tzinfo is None:
+                    lw = lw.replace(tzinfo=timezone.utc)
                 run_ai = (now_dt - lw).total_seconds() > COOLDOWN_S
-            
+
             if run_ai:
                 pending_ai.append((a, inc_id))
 
-        # Mark as processed
-        ids = [r["id"] for r in rows]
+        # Mark newly-ingested rows as processed so they are not re-scanned.
+        ids = [r["id"] for r in unprocessed]
         for i in range(0, len(ids), 900):
             chunk = ids[i:i+900]
             phs = ",".join("?" * len(chunk))
@@ -210,6 +235,22 @@ def _run_monitor_for_tenant(tenant_id: str, agent):
     for a, inc_id in pending_ai:
         try:
             wo = build_workitem(a, agent)
+            if wo.severity == "Critical":
+                log.info("AI Auto-Shutdown triggered", extra={"tenant_id": tenant_id, "asset_id": a.asset_id})
+                with get_db() as conn:
+                    state_row = conn.execute(
+                        "SELECT shut_down_assets FROM plant_state WHERE tenant_id=?", (tenant_id,)
+                    ).fetchone()
+                    sd_str = state_row["shut_down_assets"] if state_row and "shut_down_assets" in state_row.keys() else "[]"
+                    try: sd_list = json.loads(sd_str) if sd_str else []
+                    except: sd_list = []
+                    if a.asset_id not in sd_list:
+                        sd_list.append(a.asset_id)
+                        conn.execute(
+                            "UPDATE plant_state SET shut_down_assets=? WHERE tenant_id=?",
+                            (json.dumps(sd_list), tenant_id)
+                        )
+                        conn.commit()
             hooks = []
             with get_db() as conn:
                 conn.execute(
@@ -237,7 +278,7 @@ def _run_monitor_for_tenant(tenant_id: str, agent):
         except Exception as e:
             log.error("AI triage failed", extra={"tenant_id": tenant_id, "error": str(e)})
 
-    return len(rows)
+    return len(unprocessed)
 
 
 def _monitor_loop():
@@ -366,14 +407,23 @@ def api_context():
                 return jsonify({"error": "Insufficient permissions — Admin only"}), 403
             data = request.json or {}
             try:
+                state = conn.execute("SELECT grid_available, plant_status, shut_down_assets FROM plant_state WHERE tenant_id=?", (g.tenant_id,)).fetchone()
+                grid_available = bool(data.get("grid_available", state["grid_available"] if state else True))
+                plant_status = data.get("plant_status", state["plant_status"] if state else "RUNNING")
+                
+                if "shut_down_assets" in data.keys():
+                    sd = data["shut_down_assets"]
+                else:
+                    sd = json.loads(state["shut_down_assets"]) if state and state["shut_down_assets"] else []
+                
                 conn.execute(
-                    "INSERT INTO plant_state (tenant_id, grid_available, plant_status) "
-                    "VALUES (?, ?, ?) "
+                    "INSERT INTO plant_state (tenant_id, grid_available, plant_status, shut_down_assets) "
+                    "VALUES (?, ?, ?, ?) "
                     "ON CONFLICT (tenant_id) DO UPDATE SET "
-                    "grid_available=EXCLUDED.grid_available, plant_status=EXCLUDED.plant_status",
-                    (g.tenant_id,
-                     bool(data.get("grid_available", True)),
-                     data.get("plant_status", "RUNNING"))
+                    "grid_available=EXCLUDED.grid_available, "
+                    "plant_status=EXCLUDED.plant_status, "
+                    "shut_down_assets=EXCLUDED.shut_down_assets",
+                    (g.tenant_id, grid_available, plant_status, json.dumps(sd))
                 )
                 conn.commit()
                 return jsonify({"success": True})
@@ -381,9 +431,37 @@ def api_context():
                 log.error("api_context POST error", extra={"error": str(e)})
                 return jsonify({"error": str(e)}), 500
         state = conn.execute("SELECT * FROM plant_state WHERE tenant_id=?", (g.tenant_id,)).fetchone()
+        sd_val = state["shut_down_assets"] if state else []
+        if isinstance(sd_val, str):
+            try: sd_list = json.loads(sd_val) if sd_val else []
+            except: sd_list = []
+        else:
+            sd_list = sd_val if sd_val is not None else []
         return jsonify({
             "grid_available": bool(state["grid_available"]) if state else True,
             "plant_status": state["plant_status"] if state else "RUNNING",
+            "shut_down_assets": sd_list
+        })
+
+@app.route("/api/v2/simulator-context", methods=["GET"])
+def api_v2_simulator_context():
+    api_key = request.headers.get("X-API-Key", "")
+    with get_db() as conn:
+        tenant = conn.execute("SELECT id FROM tenants WHERE api_key=?", (api_key,)).fetchone()
+        if not tenant:
+            return jsonify({"error": "Unauthorized"}), 401
+        tid = tenant["id"]
+        state = conn.execute("SELECT * FROM plant_state WHERE tenant_id=?", (tid,)).fetchone()
+        sd_val = state["shut_down_assets"] if state else []
+        if isinstance(sd_val, str):
+            try: sd_list = json.loads(sd_val) if sd_val else []
+            except: sd_list = []
+        else:
+            sd_list = sd_val if sd_val is not None else []
+        return jsonify({
+            "grid_available": bool(state["grid_available"]) if state else True,
+            "plant_status": state["plant_status"] if state else "RUNNING",
+            "shut_down_assets": sd_list
         })
 
 # ── Fleet ─────────────────────────────────────────────────────────────────────
@@ -406,6 +484,26 @@ def api_live_fleet():
             "SELECT asset_id, rule FROM incidents WHERE tenant_id=? AND status='Active'", (tid,)
         ).fetchall()
 
+        # Fetch plant_state in same connection to avoid a second round-trip
+        state = conn.execute(
+            "SELECT grid_available, plant_status, assets_in_maintenance, shut_down_assets FROM plant_state WHERE tenant_id=?", (tid,)
+        ).fetchone()
+
+    from app.schema import PlantContext
+    maint_str = state["assets_in_maintenance"] if state and "assets_in_maintenance" in state.keys() else "[]"
+    try: maint_list = json.loads(maint_str) if maint_str else []
+    except: maint_list = []
+    
+    sd_str = state["shut_down_assets"] if state and "shut_down_assets" in state.keys() else "[]"
+    try: sd_list = json.loads(sd_str) if sd_str else []
+    except: sd_list = []
+    
+    ctx = PlantContext(
+        grid_available=bool(state["grid_available"]) if state else True,
+        plant_status=state["plant_status"] if state else "RUNNING",
+        assets_in_maintenance=maint_list
+    )
+
     active_map = {}
     for row in active_inc:
         active_map.setdefault(row["asset_id"], []).append(row["rule"])
@@ -413,12 +511,21 @@ def api_live_fleet():
     assets, anomalies = [], []
     for t in latest_tel:
         aid   = t["asset_id"]
-        rules = active_map.get(aid, [])
+        
+        # Filter rules based on suppression logic
+        raw_rules = active_map.get(aid, [])
+        rules = []
+        if not ctx.is_suppressed(aid) and aid not in sd_list:
+            rules = raw_rules
+            
         status = "nominal"
-        for r in rules:
-            sev = SEV_FOR_RULE.get(r, "Medium")
-            if sev == "Critical": status = "critical"; break
-            else: status = "fault"
+        if aid in sd_list:
+            status = "shutdown"
+        else:
+            for r in rules:
+                sev = SEV_FOR_RULE.get(r, "Medium")
+                if sev == "Critical": status = "critical"; break
+                else: status = "fault"
 
         raw = t["metrics_json"]
         metrics = raw if isinstance(raw, dict) else json.loads(raw)
@@ -443,9 +550,6 @@ def api_live_fleet():
     for a in anomalies:
         by_sev[a["severity"]] = by_sev.get(a["severity"], 0) + 1
 
-    with get_db() as conn:
-        state = conn.execute("SELECT grid_available, plant_status FROM plant_state WHERE tenant_id=?", (tid,)).fetchone()
-        
     return jsonify({
         "assets": assets, "anomalies": anomalies,
         "total_faults": len(anomalies), "by_severity": by_sev,
@@ -453,6 +557,7 @@ def api_live_fleet():
         "nominal_count": sum(1 for a in assets if a["status"] == "nominal"),
         "grid_available": bool(state["grid_available"]) if state else True,
         "plant_status": state["plant_status"] if state else "RUNNING",
+        "shut_down_assets": sd_list
     })
 
 # ── Work Orders ───────────────────────────────────────────────────────────────

@@ -34,17 +34,47 @@ def read_base_telemetry():
             })
     return rows
 
+shut_down_assets = []
+last_context_fetch = 0
+
+def fetch_shut_down_assets():
+    global shut_down_assets, last_context_fetch
+    now = time.time()
+    if now - last_context_fetch < 6:
+        return
+    last_context_fetch = now
+    
+    context_url = INGEST_URL.replace("/ingest", "/simulator-context")
+    headers = {"X-API-Key": API_KEY}
+    try:
+        res = requests.get(context_url, headers=headers, timeout=5)
+        if res.status_code == 200:
+            data = res.json()
+            shut_down_assets = data.get("shut_down_assets", [])
+            print(f"Fetched simulator context. Shut down assets: {shut_down_assets}")
+    except Exception as e:
+        print(f"Failed to fetch simulator context: {e}")
+
 def generate_live_data(base_rows):
     now = datetime.now(timezone.utc).isoformat()
     new_rows = []
     
+    try:
+        fetch_shut_down_assets()
+    except Exception as e:
+        print(f"Error fetching shut down assets: {e}")
+    
     for base in base_rows:
         metrics = base["metrics"].copy()
+        is_shut_down = base["asset_id"] in shut_down_assets
         
         for k, v in metrics.items():
-            if isinstance(v, float) or isinstance(v, int):
-                jitter = v * random.uniform(-0.02, 0.02)
-                metrics[k] = round(v + jitter, 2)
+            if isinstance(v, (float, int)):
+                if is_shut_down and any(p in k.lower() for p in ["power", "current", "generation", "output"]):
+                    metrics[k] = 0.0
+                else:
+                    jitter = v * random.uniform(-0.02, 0.02)
+                    metrics[k] = round(v + jitter, 2)
                 
         new_rows.append({
             "timestamp": now,

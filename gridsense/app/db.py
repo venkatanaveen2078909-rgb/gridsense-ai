@@ -74,7 +74,8 @@ CREATE TABLE IF NOT EXISTS plant_state (
     tenant_id TEXT PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE,
     grid_available BOOLEAN NOT NULL DEFAULT TRUE,
     plant_status TEXT NOT NULL DEFAULT 'RUNNING',
-    assets_in_maintenance JSONB NOT NULL DEFAULT '[]'::jsonb
+    assets_in_maintenance JSONB NOT NULL DEFAULT '[]'::jsonb,
+    shut_down_assets JSONB NOT NULL DEFAULT '[]'::jsonb
 );
 CREATE TABLE IF NOT EXISTS webhooks (
     id SERIAL PRIMARY KEY,
@@ -139,7 +140,8 @@ CREATE TABLE IF NOT EXISTS plant_state (
     tenant_id TEXT PRIMARY KEY,
     grid_available INTEGER NOT NULL DEFAULT 1,
     plant_status TEXT NOT NULL DEFAULT 'RUNNING',
-    assets_in_maintenance TEXT NOT NULL DEFAULT '[]'
+    assets_in_maintenance TEXT NOT NULL DEFAULT '[]',
+    shut_down_assets TEXT NOT NULL DEFAULT '[]'
 );
 CREATE TABLE IF NOT EXISTS webhooks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
