@@ -290,5 +290,4 @@ GridSense separates **Detection** from **Reasoning** and **Execution**:
 
 ---
 
-*Powering intelligent operations for the renewable-energy era.*  
-Built by **AYU Systems** • hello@ayusystems.com • [www.ayusystems.com](http://www.ayusystems.com)
+*Powering intelligent operations for the renewable-energy era.*
